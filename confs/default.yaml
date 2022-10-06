@@ -1,0 +1,42 @@
+training:
+    batch_size: 64
+    batch_size_val: 64
+    num_workers: 6
+    n_epochs: 200
+    early_stop_patience: 200
+    gradient_clip: 0.
+    validation_interval: 1
+    use_eval: False
+    seed: 42
+    precision: 32
+    arcface: True
+    max_fpr: 0.1
+scaler:
+    statistic: instance
+    normtype: minmax
+    dims: [1, 2]
+    savepath: ./scaler.ckpt
+data:
+    audio_folder: "/data/liuyi/data/DCASE_2022_DATA/"
+    dev_train_csv: "/data/liuyi/data/DCASE_2022_DATA/metadata/dev_train_data.csv"
+    dev_test_csv: "/data/liuyi/data/DCASE_2022_DATA/metadata/dev_test_data.csv"
+    eval_train_csv: "/data/liuyi/data/DCASE_2022_DATA/metadata/eval_train_data.csv"
+    audio_max_len: 10
+opt:
+    lr: 0.0001
+feats:
+    sample_rate: 16000
+    n_window: 1024
+    hop_length: 512
+    f_min: 50
+    f_max: 8000
+    n_mels: 128
+net:
+    embedding_size: 128
+    num_class: 21
+    margin: 0.7
+    scale: 30
+represent:
+    score_type: cosine
+    pooling_type: avg
+    domain_represent: False
