@@ -196,11 +196,6 @@ if __name__ == "__main__":
         help="Record your experimental details to distinguish others experiment",
     )
     parser.add_argument(
-        "--resume_from_checkpoint",
-        default=None,
-        help="Allow the training to be resumed, take as input a previously saved model (.ckpt).",
-    )
-    parser.add_argument(
         "--test_from_checkpoint", default=None, help="Test the model specified"
     )
     parser.add_argument(
