@@ -40,10 +40,10 @@ def represent_extractor(embedding_list, pooling_type, domain_represent=False):
             section_embedding_dict[key] = torch.mean(section_embedding_dict[key], dim=0)
         elif pooling_type == 'LOF':
             lof_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
-            section_embedding_dict[key] = LocalOutlierFactor(n_neighbors=4).fit(lof_list)
+            section_embedding_dict[key] = LocalOutlierFactor(n_neighbors=4, novelty=True).fit(lof_list)
         elif pooling_type == 'GMM':
             gmm_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
-            section_embedding_dict[key] = GaussianMixture(n_components=3, covariance_type='full').fit(gmm_list)
+            section_embedding_dict[key] = GaussianMixture(n_components=5, covariance_type='full').fit(gmm_list)
         else:
             raise NotImplementedError
 
@@ -70,18 +70,18 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
             raise NotImplementedError
     elif score_type == 'GMM':
         if len(represent_embedding) == 2:
-            score = min(-represent_embedding[0].score_samples(embedding.cpu().numpy()),
-                        -represent_embedding[1].score_samples(embedding.cpu().numpy()))
+            score = torch.tensor(min(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()),
+                                     -represent_embedding[1].score_samples(embedding.unsqueeze(0).cpu().numpy())), dtype=torch.float32)[0].cuda()
         elif len(represent_embedding) == 1:
-            score = -represent_embedding[0].score_samples(embedding.cpu().numpy())
+            score = torch.tensor(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()), dtype=torch.float32)[0].cuda()
         else:
             raise NotImplementedError
     elif score_type == 'LOF':
         if len(represent_embedding) == 2:
-            score = min(-represent_embedding[0]._decision_function(embedding.cpu().numpy()),
-                        -represent_embedding[1]._decision_function(embedding.cpu().numpy()))
+            score = torch.tensor(min(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()),
+                                     -represent_embedding[1].score_samples(embedding.unsqueeze(0).cpu().numpy())), dtype=torch.float32)[0].cuda()
         elif len(represent_embedding) == 1:
-            score = -represent_embedding[0]._decision_function(embedding.cpu().numpy())
+            score = torch.tensor(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()), dtype=torch.float32)[0].cuda()
         else:
             raise NotImplementedError
     else:
