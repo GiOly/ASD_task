@@ -18,6 +18,8 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
                         1 - torch.cosine_similarity(embedding, represent_embedding[1], dim=0))
         elif len(represent_embedding) == 1:
             score = 1 - torch.cosine_similarity(embedding, represent_embedding[0], dim=0)
+        else:
+            raise NotImplementedError
 
     elif score_type == 'mahalanobis':
         if len(represent_embedding) == 2:
@@ -25,4 +27,8 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
                         mahalanobis(embedding.cpu().numpy(), represent_embedding[1].squeeze(1).cpu().numpy()))
         elif len(represent_embedding) == 1:
             score = mahalanobis(embedding.cpu().numpy(), represent_embedding[0].squeeze(1).cpu().numpy())
+        else:
+            raise NotImplementedError
+    else:
+        raise NotImplementedError
     return score

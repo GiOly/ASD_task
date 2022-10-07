@@ -1,5 +1,6 @@
 import os
-import numpy as np
+
+
 import pandas as pd
 import pytorch_lightning as pl
 import torch
@@ -7,9 +8,7 @@ from collections import defaultdict
 from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from torchmetrics import Accuracy, AUROC
 from utils.scaler import TorchScaler
-from utils.anomaly_score import anomaly_score_calculator
 from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score
-from tqdm import tqdm
 import csv
 
 
@@ -29,6 +28,13 @@ class ASDTask(pl.LightningModule):
 
         self.hparams.update(hparams)
         self.save_hyperparameters(hparams)
+
+        try:
+            self.log_dir = self.logger.log_dir
+        except Exception as e:
+            self.log_dir = os.path.join(self.hparams["log_dir"], self.hparams["version"])
+            os.makedirs(self.log_dir, exist_ok=True)
+
         self.model = model
         self.opt = opt
         self.scheduler = scheduler
@@ -164,6 +170,8 @@ class ASDTask(pl.LightningModule):
                 pass
             elif pooling_type == 'GMM':
                 pass
+            else:
+                raise NotImplementedError
 
         return section_embedding_dict
 
@@ -273,21 +281,30 @@ class ASDTask(pl.LightningModule):
         self.test_buffer = self.test_buffer.append(batch_predict_df)
 
     def on_test_epoch_end(self):
-        log_dir = self.logger.log_dir
         self.test_buffer.columns = ["filename", "anomaly_score", "anomaly_label",
                                     "machine_label", "section_label", "domain_label"]
         result_dict = compute_test_auc(self.test_buffer, max_fpr=self.hparams["training"]["max_fpr"])
 
         csv_line = []
+        auc_pauc = []
         for machine, result_df in result_dict.items():
             csv_line.append([machine])
             csv_line.append(list(result_df.columns))
             for _, row in result_df.iterrows():
-                csv_line.append(list(row))
+                csv_line.append(list(row.apply(lambda x: format(x, '.2%') if not isinstance(x, str) else x)))
+            auc_pauc.append('{:.2f}%/{:.2f}%'.format(result_df.loc[result_df['section'] == 'mean', 'auc'].values[0] * 100,
+                                                     result_df.loc[result_df['section'] == 'mean', 'pauc'].values[0] * 100))
             csv_line.append([])
-        with open(os.path.join(log_dir, 'result.csv'), "w", newline="") as f:
+
+        csv_line.append(result_dict.keys())
+        csv_line.append(['AUC/pAUC'] * len(result_dict.keys()))
+        csv_line.append(auc_pauc)
+
+        csv_save_path = os.path.join(self.log_dir, 'result.csv')
+        with open(csv_save_path, "w", newline="") as f:
             writer = csv.writer(f, lineterminator='\n')
             writer.writerows(csv_line)
+        print(f"The results of the experiment are saved in {self.log_dir}")
 
     def configure_optimizers(self):
         return [self.opt], [self.scheduler]

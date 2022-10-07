@@ -3,7 +3,7 @@ training:
     batch_size_val: 64
     num_workers: 6
     n_epochs: 200
-    early_stop_patience: 200
+    early_stop_patience: 20
     gradient_clip: 0.
     validation_interval: 1
     use_eval: False
@@ -23,7 +23,7 @@ data:
     eval_train_csv: "/data/liuyi/data/DCASE_2022_DATA/metadata/eval_train_data.csv"
     audio_max_len: 10
 opt:
-    lr: 0.0001
+    lr: 0.001
 feats:
     sample_rate: 16000
     n_window: 1024

@@ -5,13 +5,14 @@ warnings.filterwarnings('ignore')
 
 import os
 import random
-import torch
 import numpy as np
 import pandas as pd
 import yaml
 
-import torch.multiprocessing
-torch.multiprocessing.set_sharing_strategy('file_system')
+from utils.GPU import auto_gpu
+auto_gpu(gpu_num=1, gpu_mem='auto')
+
+import torch
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
@@ -99,7 +100,7 @@ def main(
 
         opt = torch.optim.Adam(model.parameters(), config["opt"]["lr"], betas=(0.9, 0.999))
         scheduler = {
-            "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=len(train_dataset)),
+            "scheduler": torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.9),
             "interval": "step"
         }
         logger = TensorBoardLogger(
@@ -127,7 +128,7 @@ def main(
         batch_sampler = None
         opt = None
         scheduler = None
-        logger = True
+        logger = False
         callbacks = None
 
     ASD_training = ASDTask(
@@ -146,7 +147,7 @@ def main(
         limit_train_batches = 2
         limit_val_batches = 2
         limit_test_batches = 1.0
-        n_epochs = 3
+        n_epochs = 1
     else:
         log_every_n_steps = 40
         limit_train_batches = 1.0
@@ -187,7 +188,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--log_dir",
-        default="./exp/",
+        default="./exp",
         help="Directory where to save tensorboard logs, saved models, etc.",
     )
     parser.add_argument(

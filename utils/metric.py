@@ -43,8 +43,8 @@ def batched_preds(anomaly_scores, class_labels, anomaly_labels, domain_labels, f
 
 
 def compute_test_auc(prediction_df, max_fpr=0.1):
-    machine_set = set(prediction_df["machine_label"])
-    section_set = set(prediction_df["section_label"])
+    machine_set = sorted(list(set(prediction_df["machine_label"])))
+    section_set = sorted(set(prediction_df["section_label"]))
     result = {}
     for machine in machine_set:
         machine_result_df = pd.DataFrame()
