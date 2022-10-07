@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from collections import defaultdict
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.mixture import GaussianMixture
 
 
 def mahalanobis(x, distribute):
@@ -37,9 +39,11 @@ def represent_extractor(embedding_list, pooling_type, domain_represent=False):
         if pooling_type == 'avg':
             section_embedding_dict[key] = torch.mean(section_embedding_dict[key], dim=0)
         elif pooling_type == 'LOF':
-            pass
+            lof_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
+            section_embedding_dict[key] = LocalOutlierFactor(n_neighbors=4).fit(lof_list)
         elif pooling_type == 'GMM':
-            pass
+            gmm_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
+            section_embedding_dict[key] = GaussianMixture(n_components=3, covariance_type='full').fit(gmm_list)
         else:
             raise NotImplementedError
 
@@ -62,6 +66,22 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
                         mahalanobis(embedding.cpu().numpy(), represent_embedding[1].squeeze(1).cpu().numpy()))
         elif len(represent_embedding) == 1:
             score = mahalanobis(embedding.cpu().numpy(), represent_embedding[0].squeeze(1).cpu().numpy())
+        else:
+            raise NotImplementedError
+    elif score_type == 'GMM':
+        if len(represent_embedding) == 2:
+            score = min(-represent_embedding[0].score_samples(embedding.cpu().numpy()),
+                        -represent_embedding[1].score_samples(embedding.cpu().numpy()))
+        elif len(represent_embedding) == 1:
+            score = -represent_embedding[0].score_samples(embedding.cpu().numpy())
+        else:
+            raise NotImplementedError
+    elif score_type == 'LOF':
+        if len(represent_embedding) == 2:
+            score = min(-represent_embedding[0]._decision_function(embedding.cpu().numpy()),
+                        -represent_embedding[1]._decision_function(embedding.cpu().numpy()))
+        elif len(represent_embedding) == 1:
+            score = -represent_embedding[0]._decision_function(embedding.cpu().numpy())
         else:
             raise NotImplementedError
     else:
