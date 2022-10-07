@@ -1,9 +1,9 @@
 training:
-    batch_size: 16
+    batch_size: 64
     batch_size_val: 128
-    num_workers: 6
+    num_workers: 12
     n_epochs: 200
-    early_stop_patience: 20
+    early_stop_patience: 15
     gradient_clip: 0.
     validation_interval: 1
     use_eval: False

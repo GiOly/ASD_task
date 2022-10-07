@@ -172,8 +172,6 @@ class ASDTask(pl.LightningModule):
         mels = self.mel_spec(audio)
         preds, embedding = self.detect(mels, class_labels, self.model)
 
-        valid_loss = self.supervised_loss(preds, class_labels)
-
         detected_embedding_dict = {
             'embedding': embedding,
             'domain_label': domain_labels,
@@ -195,13 +193,12 @@ class ASDTask(pl.LightningModule):
         accuracy = self.accuracy_calculator.compute()
         auc = self.auc_calculator.compute()
         pauc = self.pauc_calculator.compute()
-        overall = auc + pauc
 
         self.log('valid/accuracy', accuracy)
-        self.log('valid/overall', overall, prog_bar=True)
-        self.log('valid/auc', auc)
+        self.log('valid/auc+pauc', auc+pauc)
+        self.log('valid/auc', auc, prog_bar=True)
         self.log('valid/pauc', pauc)
-        return overall
+        return auc
 
     def on_save_checkpoint(self, checkpoint):
         checkpoint = self.model.state_dict()

@@ -10,10 +10,12 @@ import pandas as pd
 import yaml
 
 from utils.GPU import auto_gpu
+
 auto_gpu()
 
 import torch
 import torch.multiprocessing
+
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 import pytorch_lightning as pl
@@ -112,14 +114,14 @@ def main(
 
         callbacks = [
             EarlyStopping(
-                monitor="valid/overall",
+                monitor="valid/auc",
                 patience=config["training"]["early_stop_patience"],
                 verbose=True,
                 mode="max",
             ),
             ModelCheckpoint(
                 logger.log_dir,
-                monitor="valid/overall",
+                monitor="valid/auc",
                 save_top_k=1,
                 mode="max",
                 save_last=True,
