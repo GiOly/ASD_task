@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from collections import defaultdict
 
 
 def mahalanobis(x, distribute):
@@ -9,6 +10,40 @@ def mahalanobis(x, distribute):
     VI = np.linalg.inv(cov)
     m = np.dot(np.dot(delta, VI), delta.T)
     return np.sqrt(m)
+
+
+def represent_extractor(embedding_list, pooling_type, domain_represent=False):
+    section_embedding_dict = defaultdict(list)
+    if domain_represent:
+        for emb_dict in embedding_list:
+            for e in range(len(emb_dict['embedding'])):
+                embedding = emb_dict['embedding'][e]
+                class_label = emb_dict['class_label'][e].item()
+                domain_label = emb_dict['domain_label'][e]
+
+                class_domain_label = str(class_label) + '_' + domain_label
+                section_embedding_dict[class_domain_label].append(embedding)
+    else:
+        for emb_dict in embedding_list:
+            for e in range(len(emb_dict['embedding'])):
+                embedding = emb_dict['embedding'][e]
+                class_label = emb_dict['class_label'][e].item()
+
+                class_label = str(class_label)
+                section_embedding_dict[class_label].append(embedding)
+
+    for key, value in section_embedding_dict.items():
+        section_embedding_dict[key] = torch.stack(section_embedding_dict[key], dim=0)
+        if pooling_type == 'avg':
+            section_embedding_dict[key] = torch.mean(section_embedding_dict[key], dim=0)
+        elif pooling_type == 'LOF':
+            pass
+        elif pooling_type == 'GMM':
+            pass
+        else:
+            raise NotImplementedError
+
+    return section_embedding_dict
 
 
 def anomaly_score_calculator(embedding, represent_embedding, score_type):

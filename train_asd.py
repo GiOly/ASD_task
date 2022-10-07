@@ -10,9 +10,11 @@ import pandas as pd
 import yaml
 
 from utils.GPU import auto_gpu
-auto_gpu(gpu_num=1, gpu_mem='auto')
+auto_gpu()
 
 import torch
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
@@ -100,8 +102,8 @@ def main(
 
         opt = torch.optim.Adam(model.parameters(), config["opt"]["lr"], betas=(0.9, 0.999))
         scheduler = {
-            "scheduler": torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.9),
-            "interval": "step"
+            "scheduler": torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.99),
+            "interval": "epoch"
         }
         logger = TensorBoardLogger(
             os.path.dirname(config["log_dir"]), config["log_dir"].split("/")[-1],

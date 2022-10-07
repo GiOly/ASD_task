@@ -1,15 +1,15 @@
 import os
-
+import csv
+import torch
 
 import pandas as pd
 import pytorch_lightning as pl
-import torch
-from collections import defaultdict
+
 from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from torchmetrics import Accuracy, AUROC
 from utils.scaler import TorchScaler
+from utils.anomaly_score import represent_extractor
 from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score
-import csv
 
 
 class ASDTask(pl.LightningModule):
@@ -135,45 +135,11 @@ class ASDTask(pl.LightningModule):
 
         loss = self.supervised_loss(preds, class_labels)
 
-        self.log('train/step', self.scheduler["scheduler"]._step_count, prog_bar=True)
+        self.log('train/step', self.global_step, prog_bar=True)
         self.log('train/loss', loss)
         self.log('train/lr', self.opt.param_groups[-1]["lr"])
 
         return loss
-
-    def represent_extractor(self, pooling_type, domain_represent=False):
-
-        section_embedding_dict = defaultdict(list)
-        if domain_represent:
-            for emb_dict in self.embedding_list:
-                for e in range(len(emb_dict['embedding'])):
-                    embedding = emb_dict['embedding'][e]
-                    class_label = emb_dict['class_label'][e].item()
-                    domain_label = emb_dict['domain_label'][e]
-
-                    class_domain_label = str(class_label) + '_' + domain_label
-                    section_embedding_dict[class_domain_label].append(embedding)
-        else:
-            for emb_dict in self.embedding_list:
-                for e in range(len(emb_dict['embedding'])):
-                    embedding = emb_dict['embedding'][e]
-                    class_label = emb_dict['class_label'][e].item()
-
-                    class_label = str(class_label)
-                    section_embedding_dict[class_label].append(embedding)
-
-        for key, value in section_embedding_dict.items():
-            section_embedding_dict[key] = torch.stack(section_embedding_dict[key], dim=0)
-            if pooling_type == 'avg':
-                section_embedding_dict[key] = torch.mean(section_embedding_dict[key], dim=0)
-            elif pooling_type == 'LOF':
-                pass
-            elif pooling_type == 'GMM':
-                pass
-            else:
-                raise NotImplementedError
-
-        return section_embedding_dict
 
     def on_validation_epoch_start(self):
         self.embedding_list = []
@@ -192,8 +158,9 @@ class ASDTask(pl.LightningModule):
             self.embedding_list.append({'embedding': embedding,
                                         'domain_label': domain_labels,
                                         'class_label': class_labels})
-        self.represent_embedding_dict = self.represent_extractor(pooling_type=self.hparams["represent"]["pooling_type"],
-                                                                 domain_represent=self.hparams["represent"]["domain_represent"])
+        self.represent_embedding_dict = represent_extractor(embedding_list=self.embedding_list,
+                                                            pooling_type=self.hparams["represent"]["pooling_type"],
+                                                            domain_represent=self.hparams["represent"]["domain_represent"])
 
     def validation_step(self, batch, batch_indx):
         if self.hparams["represent"]["domain_represent"]:
@@ -253,8 +220,9 @@ class ASDTask(pl.LightningModule):
             self.embedding_list.append({'embedding': embedding,
                                         'domain_label': domain_labels,
                                         'class_label': class_labels})
-        self.represent_embedding_dict = self.represent_extractor(pooling_type=self.hparams["represent"]["pooling_type"],
-                                                                 domain_represent=True)
+        self.represent_embedding_dict = represent_extractor(embedding_list=self.embedding_list,
+                                                            pooling_type=self.hparams["represent"]["pooling_type"],
+                                                            domain_represent=True)
 
     def test_step(self, batch, batch_indx):
         audio, class_labels, anomaly_labels, domain_labels, filenames = batch
