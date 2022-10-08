@@ -10,7 +10,7 @@ from sklearn.mixture import GaussianMixture
 
 
 def decode_class_label(class_label):
-    return np.where(class_label.detach().cpu().numpy() == 1)[0]
+    return int(np.where(class_label.detach().cpu().numpy() == 1)[0])
 
 
 def mahalanobis(x, distribute):
@@ -121,14 +121,13 @@ def batched_preds(anomaly_scores, class_labels, anomaly_labels, domain_labels, f
 
     for i in range(anomaly_scores.shape[0]):
         anomaly_score = anomaly_scores[i].item()
-        class_label = class_labels[i].item()
+        class_label = decode_class_label(class_labels[i])
         anomaly_label = anomaly_labels[i].item()
         domain_label = domain_labels[i]
         filename = filenames[i]
 
         machine_label, section_label = lable_dict[class_label].split('/')
         result_labels = [[filename, anomaly_score, anomaly_label, machine_label, section_label, domain_label]]
-        curr_pred = pd.DataFrame(result_labels)
         prediction_df = prediction_df.append(result_labels, ignore_index=True)
     return prediction_df
 

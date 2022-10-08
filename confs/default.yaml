@@ -3,7 +3,7 @@ training:
     batch_size_val: 128
     num_workers: 12
     n_epochs: 200
-    early_stop_patience: 10
+    early_stop_patience: 200
     gradient_clip: 0.
     validation_interval: 1
     use_eval: False
