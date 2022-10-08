@@ -1,15 +1,16 @@
 import os
 import csv
 import torch
+import random
 
 import pandas as pd
 import pytorch_lightning as pl
 
 from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
-from torchmetrics import Accuracy, AUROC
+from torchmetrics.classification import Accuracy, AUROC
 from utils.scaler import TorchScaler
-from utils.anomaly_score import represent_extractor
-from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score
+from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score, represent_extractor, decode_class_label
+from utils.mixup import mixup
 
 
 class ASDTask(pl.LightningModule):
@@ -63,7 +64,7 @@ class ASDTask(pl.LightningModule):
         )
         self.scaler = self._init_scaler()
 
-        self.supervised_loss = torch.nn.CrossEntropyLoss()
+        self.supervised_loss = torch.nn.BCELoss()
 
         self.embedding_list = []
 
@@ -130,8 +131,13 @@ class ASDTask(pl.LightningModule):
         else:
             audio, class_labels = batch
             domain_labels = None
-        feature = self.mel_spec(audio)
-        preds, _ = self.detect(feature, class_labels, self.model)
+
+        features = self.mel_spec(audio)
+
+        if self.hparams["training"]["mixup"] and 0.5 > random.random():
+            features, class_labels = mixup(features, class_labels)
+
+        preds, _ = self.detect(features, class_labels, self.model)
 
         loss = self.supervised_loss(preds, class_labels)
 
@@ -150,7 +156,9 @@ class ASDTask(pl.LightningModule):
             else:
                 audio, class_labels = batch
                 domain_labels = None
+
             mels = self.mel_spec(audio.cuda())
+
             self.model.eval()
             with torch.no_grad():
                 _, embedding = self.detect(mels, class_labels.cuda(), self.model)
@@ -180,8 +188,10 @@ class ASDTask(pl.LightningModule):
 
         anomaly_score = compute_batch_anomaly_score(detected_embedding_dict,
                                                     self.represent_embedding_dict,
-                                                    self.hparams["represent"]["score_type"])
+                                                    self.hparams["represent"]["score_type"],
+                                                    self.hparams["represent"]["domain_represent"])
 
+        class_labels = class_labels.to(torch.int16)
         self.accuracy_calculator.update(preds, class_labels)
         self.auc_calculator.update(anomaly_score, anomaly_labels)
         self.pauc_calculator.update(anomaly_score, anomaly_labels)
@@ -219,7 +229,7 @@ class ASDTask(pl.LightningModule):
                                         'class_label': class_labels})
         self.represent_embedding_dict = represent_extractor(embedding_list=self.embedding_list,
                                                             pooling_type=self.hparams["represent"]["pooling_type"],
-                                                            domain_represent=True)
+                                                            domain_represent=self.hparams["represent"]["domain_represent"])
 
     def test_step(self, batch, batch_indx):
         audio, class_labels, anomaly_labels, domain_labels, filenames = batch
@@ -235,7 +245,8 @@ class ASDTask(pl.LightningModule):
 
         anomaly_scores = compute_batch_anomaly_score(detected_embedding_dict,
                                                      self.represent_embedding_dict,
-                                                     self.hparams["represent"]["score_type"])
+                                                     self.hparams["represent"]["score_type"],
+                                                     self.hparams["represent"]["domain_represent"])
 
         batch_predict_df = batched_preds(anomaly_scores,
                                          class_labels,

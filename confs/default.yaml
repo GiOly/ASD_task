@@ -3,7 +3,7 @@ training:
     batch_size_val: 128
     num_workers: 12
     n_epochs: 200
-    early_stop_patience: 15
+    early_stop_patience: 10
     gradient_clip: 0.
     validation_interval: 1
     use_eval: False
@@ -11,6 +11,7 @@ training:
     precision: 32
     arcface: True
     max_fpr: 0.1
+    mixup: True
 scaler:
     statistic: instance
     normtype: minmax
@@ -39,4 +40,4 @@ net:
 represent:
     score_type: cosine
     pooling_type: avg
-    domain_represent: False
+    domain_represent: True

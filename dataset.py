@@ -75,7 +75,10 @@ class ASDDataset(Dataset):
         return att_dict
 
     def encode_class_label(self, example):
-        return self.label_dict[example['machine'] + '/' + example['section']]
+        label_idx = self.label_dict[example['machine'] + '/' + example['section']]
+        y = np.zeros(len(self.label_dict.keys()))
+        y[label_idx] = 1
+        return y
 
     def encode_anomaly_label(self, example):
         if example['anomaly'] == 'normal':

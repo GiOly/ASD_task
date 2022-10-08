@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import math
 
@@ -177,7 +178,8 @@ class MobileFaceNet(nn.Module):
             out = self.arcface(feature, label)
         else:
             out = self.fc_out(feature)
-        return out, feature
+        preds = torch.softmax(out, dim=1)
+        return preds, feature
 
 class MFN_Classifier(nn.Module):
     def __init__(self,
