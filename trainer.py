@@ -64,7 +64,7 @@ class ASDTask(pl.LightningModule):
         )
         self.scaler = self._init_scaler()
 
-        self.supervised_loss = torch.nn.BCELoss()
+        self.supervised_loss = torch.nn.CrossEntropyLoss()
 
         self.embedding_list = []
 
@@ -130,7 +130,6 @@ class ASDTask(pl.LightningModule):
             audio, class_labels, domain_labels = batch
         else:
             audio, class_labels = batch
-            domain_labels = None
 
         features = self.mel_spec(audio)
 
