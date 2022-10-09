@@ -10,7 +10,7 @@ from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from torchmetrics.classification import Accuracy, AUROC
 from utils.scaler import TorchScaler
 from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score, represent_extractor, decode_class_label
-from utils.mixup import mixup
+from utils.data_aug import mixup
 
 
 class ASDTask(pl.LightningModule):
