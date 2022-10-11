@@ -24,8 +24,9 @@ from pytorch_lightning.loggers import TensorBoardLogger
 
 from dataset import ASDDataset
 from label import dev_section_label_dict, dev_eval_section_label_dict
-from nnet.model import MFN_Classifier
+from nnet.model import MobileFaceNet, SimpleMobileFaceNet
 from nnet.arcface import ArcMarginProduct
+from nnet.center_loss import CenterLoss
 from trainer import ASDTask
 
 
@@ -78,6 +79,9 @@ def main(
         return_filename=True
     )
 
+    ########################
+    # define arcface
+    ########################
     if config["training"]["arcface"]:
         arcface = ArcMarginProduct(config["net"]["embedding_size"],
                                    config["net"]["num_class"],
@@ -85,9 +89,25 @@ def main(
                                    s=config["net"]["scale"])
     else:
         arcface = None
-    model = MFN_Classifier(num_class=config["net"]["num_class"],
-                           arcface=arcface,
-                           embedding_size=config["net"]["embedding_size"])
+
+    ########################
+    # define model
+    ########################
+    model = MobileFaceNet(num_class=config["net"]["num_class"],
+                          arcface=arcface,
+                          embedding_size=config["net"]["embedding_size"])
+
+    ########################
+    # define center loss
+    ########################
+    if config["training"]["center_loss"]:
+        criterion_cent = CenterLoss(num_classes=config["net"]["num_class"],
+                                    feat_dim=config["net"]["embedding_size"])
+        opt_center_loss = torch.optim.Adam(criterion_cent.parameters(), config["opt"]["center_loss_lr"])
+    else:
+        criterion_cent = None
+        opt_center_loss = None
+
 
     if test_state_dict is None:
         valid_df = pd.read_csv(config["data"]["dev_test_csv"])
@@ -144,6 +164,8 @@ def main(
         test_data=test_dataset,
         scheduler=scheduler,
         fast_dev_run=fast_dev_run,
+        center_loss=criterion_cent,
+        opt_center_loss=opt_center_loss
     )
 
     if fast_dev_run:

@@ -54,6 +54,13 @@ class ConvBlock(nn.Module):
             return self.prelu(x)
 
 
+Simple_Mobilefacenet_bottleneck_setting = [
+    # t, c , n ,s
+    [2, 128, 2, 2],
+    [4, 128, 2, 2],
+    [4, 128, 2, 2],
+]
+
 Mobilefacenet_bottleneck_setting = [
     # t, c , n ,s
     [2, 64, 5, 2],
@@ -62,70 +69,6 @@ Mobilefacenet_bottleneck_setting = [
     [4, 128, 1, 2],
     [2, 128, 2, 1]
 ]
-
-Mobilenetv2_bottleneck_setting = [
-    # t, c, n, s
-    [1, 16, 1, 1],
-    [6, 24, 2, 2],
-    [6, 32, 3, 2],
-    [6, 64, 4, 2],
-    [6, 96, 3, 1],
-    [6, 160, 3, 2],
-    [6, 320, 1, 1],
-]
-
-
-class MobileNet_V2(nn.Module):
-    def __init__(self,
-                 num_class,
-                 bottleneck_setting=Mobilenetv2_bottleneck_setting,
-                 arcface=None):
-        super(MobileNet_V2, self).__init__()
-        self.conv1 = ConvBlock(1, 32, 3, 2, 1)
-        self.inplanes = 32
-        block = Bottleneck
-        self.blocks = self._make_layer(block, bottleneck_setting)
-        self.conv2 = ConvBlock(bottleneck_setting[-1][1], 1280, 1, 1, 0)
-
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.fc_out = nn.Linear(1280, num_class)
-        self.arcface = arcface
-        # init
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def _make_layer(self, block, setting):
-        layers = []
-        for t, c, n, s in setting:
-            for i in range(n):
-                if i == 0:
-                    layers.append(block(self.inplanes, c, s, t))
-                else:
-                    layers.append(block(self.inplanes, c, 1, t))
-                self.inplanes = c
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x, label):
-        # input(bs,1,128,313)
-        x = self.conv1(x)  # (bs,64,64,157)
-
-        x = self.blocks(x)  # (bs, 128,8,20)
-        x = self.conv2(x)  # (bs, 512,8,20)
-
-        x = self.avgpool(x)
-        feature = x.view(x.size(0), -1)  # (bs,128)
-        if self.arcface is not None:
-            out = self.arcface(feature, label)
-        else:
-            out = self.fc_out(feature)
-        return out, feature
-
 
 class MobileFaceNet(nn.Module):
     def __init__(self,
@@ -180,18 +123,57 @@ class MobileFaceNet(nn.Module):
             out = self.fc_out(feature)
         return out, feature
 
-class MFN_Classifier(nn.Module):
+class SimpleMobileFaceNet(nn.Module):
     def __init__(self,
                  num_class,
-                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 bottleneck_setting=Simple_Mobilefacenet_bottleneck_setting,
                  embedding_size=128,
                  arcface=None):
-        super(MFN_Classifier, self).__init__()
-        self.mobilenetfacenet = MobileFaceNet(num_class=num_class,
-                                              bottleneck_setting=bottleneck_setting,
-                                              embedding_size=embedding_size,
-                                              arcface=arcface)
+        super(SimpleMobileFaceNet, self).__init__()
+        self.conv1 = ConvBlock(1, 64, 3, 2, 1)
+        self.conv2 = ConvBlock(64, 64, 3, 1, 1)
+        self.inplanes = 64
+        block = Bottleneck
+        self.blocks = self._make_layer(block, bottleneck_setting)
+        self.conv3 = ConvBlock(bottleneck_setting[-1][1], 512, 1, 1, 0)
+        self.linear7 = ConvBlock(512, 512, (8, 20), 1, 0, dw=True, linear=True)
+        self.linear1 = ConvBlock(512, embedding_size, 1, 1, 0, linear=True)
+        self.drouout = nn.Dropout()
+        self.fc_out = nn.Linear(embedding_size, num_class)
+        self.arcface = arcface
+        # init
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
-    def forward(self, x_mel, label):
-        out, feature = self.mobilenetfacenet(x_mel, label)
+    def _make_layer(self, block, setting):
+        layers = []
+        for t, c, n, s in setting:
+            for i in range(n):
+                if i == 0:
+                    layers.append(block(self.inplanes, c, s, t))
+                else:
+                    layers.append(block(self.inplanes, c, 1, t))
+                self.inplanes = c
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x, label):
+        # input(bs,1,128,313)
+        x = self.conv1(x)  # (bs,64,64,157)
+        x = self.conv2(x)  # (bs, 64,64,157)
+        x = self.blocks(x)  # (bs, 128,8,20)
+        x = self.conv3(x)  # (bs, 512,8,20)
+        x = self.linear7(x)  # (32,512,1,1)
+        x = self.linear1(x)
+        x = self.drouout(x)
+        feature = x.view(x.size(0), -1)  # (bs,128)
+        if self.arcface is not None:
+            out = self.arcface(feature, label)
+        else:
+            out = self.fc_out(feature)
         return out, feature

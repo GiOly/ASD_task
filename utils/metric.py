@@ -19,10 +19,10 @@ def mahalanobis(x, distribute):
     delta = x - mu
     VI = np.linalg.inv(cov)
     m = np.dot(np.dot(delta, VI), delta.T)
-    return np.sqrt(m)
+    return m.diagonal()
 
 
-def represent_extractor(embedding_list, pooling_type, domain_represent=False):
+def represent_extractor(embedding_list, pooling_type, domain_represent=False, var_threshold=False):
     section_embedding_dict = defaultdict(list)
     if domain_represent:
         for emb_dict in embedding_list:
@@ -44,14 +44,21 @@ def represent_extractor(embedding_list, pooling_type, domain_represent=False):
 
     for key, value in section_embedding_dict.items():
         section_embedding_dict[key] = torch.stack(section_embedding_dict[key], dim=0)
+        if var_threshold:
+            # if var is bigger than threshold, than delete it
+            var = torch.var(section_embedding_dict[key], dim=1)
+            index = torch.nonzero(var<torch.mean(var).item() , as_tuple=False)
+            section_embedding_dict[key] = torch.index_select(section_embedding_dict[key], dim=0, index=index.squeeze())
         if pooling_type == 'avg':
             section_embedding_dict[key] = torch.mean(section_embedding_dict[key], dim=0)
-        elif pooling_type == 'LOF':
+        elif pooling_type == 'lof':
             lof_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
             section_embedding_dict[key] = LocalOutlierFactor(n_neighbors=4, novelty=True).fit(lof_list)
-        elif pooling_type == 'GMM':
+        elif pooling_type == 'gmm':
             gmm_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
-            section_embedding_dict[key] = GaussianMixture(n_components=5, covariance_type='full').fit(gmm_list)
+            section_embedding_dict[key] = GaussianMixture(n_components=1, covariance_type='full').fit(gmm_list)
+        elif pooling_type == 'nopooling':
+            continue
         else:
             raise NotImplementedError
 
@@ -70,13 +77,15 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
 
     elif score_type == 'mahalanobis':
         if len(represent_embedding) == 2:
-            score = min(mahalanobis(embedding.cpu().numpy(), represent_embedding[0].squeeze(1).cpu().numpy()),
-                        mahalanobis(embedding.cpu().numpy(), represent_embedding[1].squeeze(1).cpu().numpy()))
+            score = min(mahalanobis(embedding.cpu().numpy(), represent_embedding[0].cpu().numpy()),
+                        mahalanobis(embedding.cpu().numpy(), represent_embedding[1].cpu().numpy()))
+            score = torch.tensor(score, dtype=torch.float32)[0].cuda()
         elif len(represent_embedding) == 1:
-            score = mahalanobis(embedding.cpu().numpy(), represent_embedding[0].squeeze(1).cpu().numpy())
+            score = mahalanobis(embedding.cpu().numpy(), represent_embedding[0].cpu().numpy())
+            score = torch.tensor(score, dtype=torch.float32)[0].cuda()
         else:
             raise NotImplementedError
-    elif score_type == 'GMM':
+    elif score_type == 'gmm':
         if len(represent_embedding) == 2:
             score = torch.tensor(min(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()),
                                      -represent_embedding[1].score_samples(embedding.unsqueeze(0).cpu().numpy())), dtype=torch.float32)[0].cuda()
@@ -84,7 +93,7 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
             score = torch.tensor(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()), dtype=torch.float32)[0].cuda()
         else:
             raise NotImplementedError
-    elif score_type == 'LOF':
+    elif score_type == 'lof':
         if len(represent_embedding) == 2:
             score = torch.tensor(min(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()),
                                      -represent_embedding[1].score_samples(embedding.unsqueeze(0).cpu().numpy())), dtype=torch.float32)[0].cuda()

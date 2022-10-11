@@ -6,12 +6,11 @@ import random
 import pandas as pd
 import pytorch_lightning as pl
 
-from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
+from torchaudio.transforms import AmplitudeToDB, MelSpectrogram, Spectrogram
 from torchmetrics.classification import Accuracy, AUROC
 from utils.scaler import TorchScaler
 from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score, represent_extractor, decode_class_label
 from utils.data_aug import mixup
-
 
 class ASDTask(pl.LightningModule):
     def __init__(
@@ -24,6 +23,8 @@ class ASDTask(pl.LightningModule):
             test_data,
             scheduler,
             fast_dev_run=False,
+            center_loss=None,
+            opt_center_loss=None
     ):
         super(ASDTask, self).__init__()
 
@@ -50,21 +51,35 @@ class ASDTask(pl.LightningModule):
             self.num_workers = self.hparams["training"]["num_workers"]
 
         feat_params = self.hparams["feats"]
-        self.mel_spec = MelSpectrogram(
-            sample_rate=feat_params["sample_rate"],
-            n_fft=feat_params["n_window"],
-            win_length=feat_params["n_window"],
-            hop_length=feat_params["hop_length"],
-            f_min=feat_params["f_min"],
-            f_max=feat_params["f_max"],
-            n_mels=feat_params["n_mels"],
-            window_fn=torch.hamming_window,
-            wkwargs={"periodic": False},
-            power=1,
-        )
+        if self.hparams["feats"]["feature"] == "STFT":
+            self.feat_transform = Spectrogram(
+                n_fft=feat_params["n_window"],
+                win_length=feat_params["n_window"],
+                hop_length=feat_params["hop_length"],
+                window_fn=torch.hamming_window,
+                wkwargs={"periodic": False}
+            )
+        elif self.hparams["feats"]["feature"] == "Mel":
+            self.mel_spec = MelSpectrogram(
+                sample_rate=feat_params["sample_rate"],
+                n_fft=feat_params["n_window"],
+                win_length=feat_params["n_window"],
+                hop_length=feat_params["hop_length"],
+                f_min=feat_params["f_min"],
+                f_max=feat_params["f_max"],
+                n_mels=feat_params["n_mels"],
+                window_fn=torch.hamming_window,
+                wkwargs={"periodic": False},
+                power=1,
+            )
+        else:
+            raise NotImplementedError
+
         self.scaler = self._init_scaler()
 
         self.supervised_loss = torch.nn.CrossEntropyLoss()
+        self.center_loss = center_loss
+        self.opt_center_loss = opt_center_loss
 
         self.embedding_list = []
 
@@ -105,7 +120,7 @@ class ASDTask(pl.LightningModule):
         self.train_loader = self.train_dataloader()
         scaler.fit(
             self.train_loader,
-            transform_func=lambda x: self.take_log(self.mel_spec(x[0])),
+            transform_func=lambda x: self.take_log(self.feat_transform(x[0])),
         )
 
         if self.hparams["scaler"]["savepath"] is not None:
@@ -125,22 +140,25 @@ class ASDTask(pl.LightningModule):
     def detect(self, mel_feats, label, model):
         return model(self.scaler(self.take_log(mel_feats)), label)
 
-    def training_step(self, batch):
+    def training_step(self, batch, batch_idx):
         if self.hparams["represent"]["domain_represent"]:
             audio, class_labels, domain_labels = batch
         else:
             audio, class_labels = batch
 
-        features = self.mel_spec(audio)
+        features = self.feat_transform(audio)
 
         if self.hparams["training"]["mixup"] and 0.5 > random.random():
             features, class_labels = mixup(features, class_labels)
 
-        preds, _ = self.detect(features, class_labels, self.model)
+        preds, embeddings = self.detect(features, class_labels, self.model)
 
         loss = self.supervised_loss(preds, class_labels)
+        if self.center_loss is not None:
+            loss_cent = self.center_loss(embeddings, class_labels)
+            loss += loss_cent
 
-        self.log('train/step', self.global_step, prog_bar=True)
+        self.log('train/step', self.global_step)
         self.log('train/loss', loss)
         self.log('train/lr', self.opt.param_groups[-1]["lr"])
 
@@ -156,7 +174,7 @@ class ASDTask(pl.LightningModule):
                 audio, class_labels = batch
                 domain_labels = None
 
-            mels = self.mel_spec(audio.cuda())
+            mels = self.feat_transform(audio.cuda())
 
             self.model.eval()
             with torch.no_grad():
@@ -176,7 +194,7 @@ class ASDTask(pl.LightningModule):
             audio, class_labels, anomaly_labels = batch
             domain_labels = None
 
-        mels = self.mel_spec(audio)
+        mels = self.feat_transform(audio)
         preds, embedding = self.detect(mels, class_labels, self.model)
 
         detected_embedding_dict = {
@@ -204,7 +222,7 @@ class ASDTask(pl.LightningModule):
         pauc = self.pauc_calculator.compute()
 
         self.log('valid/accuracy', accuracy)
-        self.log('valid/auc+pauc', auc+pauc)
+        self.log('valid/auc+pauc', auc + pauc)
         self.log('valid/auc', auc, prog_bar=True)
         self.log('valid/pauc', pauc)
         return auc
@@ -218,7 +236,7 @@ class ASDTask(pl.LightningModule):
         self.train_data.return_domain_label = True
         for batch in self.train_dataloader():
             audio, class_labels, domain_labels = batch
-            mels = self.mel_spec(audio.cuda())
+            mels = self.feat_transform(audio.cuda())
             self.model.eval()
             with torch.no_grad():
                 _, embedding = self.detect(mels, class_labels.cuda(), self.model)
@@ -233,7 +251,7 @@ class ASDTask(pl.LightningModule):
     def test_step(self, batch, batch_indx):
         audio, class_labels, anomaly_labels, domain_labels, filenames = batch
 
-        mels = self.mel_spec(audio)
+        mels = self.feat_transform(audio)
         _, embedding = self.detect(mels, class_labels, self.model)
 
         detected_embedding_dict = {
@@ -282,7 +300,10 @@ class ASDTask(pl.LightningModule):
         print(f"The results of the experiment are saved in {self.log_dir}")
 
     def configure_optimizers(self):
-        return [self.opt], [self.scheduler]
+        if self.opt_center_loss is not None:
+            return [self.opt, self.opt_center_loss], [self.scheduler]
+        else:
+            return [self.opt], [self.scheduler]
 
     def train_dataloader(self):
         self.train_loader = torch.utils.data.DataLoader(

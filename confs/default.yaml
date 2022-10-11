@@ -11,7 +11,8 @@ training:
     precision: 32
     arcface: True
     max_fpr: 0.1
-    mixup: True
+    mixup: False
+    center_loss: False
 scaler:
     statistic: instance
     normtype: minmax
@@ -25,7 +26,9 @@ data:
     audio_max_len: 10
 opt:
     lr: 0.001
+    center_loss_lr: 0.5
 feats:
+    feature: Mel
     sample_rate: 16000
     n_window: 1024
     hop_length: 512
@@ -40,4 +43,4 @@ net:
 represent:
     score_type: cosine
     pooling_type: avg
-    domain_represent: True
+    domain_represent: False
