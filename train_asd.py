@@ -94,7 +94,6 @@ def main(
     model = MobileFaceNet(num_class=config["net"]["num_class"],
                           arcface=arcface,
                           embedding_size=config["net"]["embedding_size"])
-
     ########################
     # define center loss
     ########################
