@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import math
+from nnet.wavegram import Wavegram
 
 
 class Bottleneck(nn.Module):
@@ -34,20 +35,32 @@ class Bottleneck(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, inp, oup, k, s, p, dw=False, linear=False):
+    def __init__(self, inp, oup, k, s, p, dw=False, twostage=False, linear=False):
         super(ConvBlock, self).__init__()
         self.linear = linear
         if dw:
-            self.conv = nn.Conv2d(inp, oup, k, s, p, groups=inp, bias=False)
+            self.conv = nn.Sequential(
+                nn.Conv2d(inp, oup, k, s, p, groups=inp, bias=False),
+                nn.BatchNorm2d(oup)
+            )
+        elif twostage:
+            self.conv = nn.Sequential(
+                nn.Conv2d(inp, oup, k, s, p, bias=False),
+                nn.BatchNorm2d(oup),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(oup, oup, k, 1, p, bias=False),
+                nn.BatchNorm2d(oup)
+            )
         else:
-            self.conv = nn.Conv2d(inp, oup, k, s, p, bias=False)
-        self.bn = nn.BatchNorm2d(oup)
+            self.conv = nn.Sequential(
+                nn.Conv2d(inp, oup, k, s, p, bias=False),
+                nn.BatchNorm2d(oup)
+            )
         if not linear:
             self.prelu = nn.PReLU(oup)
 
     def forward(self, x):
         x = self.conv(x)
-        x = self.bn(x)
         if self.linear:
             return x
         else:
@@ -70,14 +83,16 @@ Mobilefacenet_bottleneck_setting = [
     [2, 128, 2, 1]
 ]
 
+
 class MobileFaceNet(nn.Module):
     def __init__(self,
                  num_class,
+                 input_channel=1,
                  bottleneck_setting=Mobilefacenet_bottleneck_setting,
                  embedding_size=128,
                  arcface=None):
         super(MobileFaceNet, self).__init__()
-        self.conv1 = ConvBlock(1, 64, 3, 2, 1)
+        self.conv1 = ConvBlock(input_channel, 64, 3, 2, 1)
         self.dw_conv1 = ConvBlock(64, 64, 3, 1, 1, dw=True)
         self.inplanes = 64
         block = Bottleneck
@@ -87,6 +102,7 @@ class MobileFaceNet(nn.Module):
         self.linear1 = ConvBlock(512, embedding_size, 1, 1, 0, linear=True)
         self.fc_out = nn.Linear(embedding_size, num_class)
         self.arcface = arcface
+        self.dropout = nn.Dropout()
         # init
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -109,19 +125,23 @@ class MobileFaceNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x, label):
+        # x = x.transpose(2, 3)
         # input(bs,1,128,313)
+
         x = self.conv1(x)  # (bs,64,64,157)
         x = self.dw_conv1(x)  # (bs, 64,64,157)
         x = self.blocks(x)  # (bs, 128,8,20)
         x = self.conv2(x)  # (bs, 512,8,20)
         x = self.linear7(x)  # (32,512,1,1)
         x = self.linear1(x)
+        x = self.dropout(x)
         feature = x.view(x.size(0), -1)  # (bs,128)
         if self.arcface is not None:
             out = self.arcface(feature, label)
         else:
             out = self.fc_out(feature)
         return out, feature
+
 
 class SimpleMobileFaceNet(nn.Module):
     def __init__(self,
@@ -163,12 +183,13 @@ class SimpleMobileFaceNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x, label):
+        # x = x.transpose(2, 3)
         # input(bs,1,128,313)
-        x = self.conv1(x)  # (bs,64,64,157)
-        x = self.conv2(x)  # (bs, 64,64,157)
-        x = self.blocks(x)  # (bs, 128,8,20)
-        x = self.conv3(x)  # (bs, 512,8,20)
-        x = self.linear7(x)  # (32,512,1,1)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.blocks(x)
+        x = self.conv3(x)
+        x = self.linear7(x)
         x = self.linear1(x)
         x = self.drouout(x)
         feature = x.view(x.size(0), -1)  # (bs,128)
@@ -177,3 +198,27 @@ class SimpleMobileFaceNet(nn.Module):
         else:
             out = self.fc_out(feature)
         return out, feature
+
+
+class STgramMFN(nn.Module):
+    def __init__(self,
+                 num_class,
+                 bottleneck_setting,
+                 arcface=None):
+        super(STgramMFN, self).__init__()
+        self.wavegram = Wavegram()
+        self.conv = ConvBlock(1, 16, 3, 1, 1, twostage=True)
+        self.MFN = MobileFaceNet(
+            num_class=num_class,
+            input_channel=16,
+            bottleneck_setting=bottleneck_setting,
+            arcface=arcface
+        )
+
+    def forward(self, wav, mel, label):
+        x_wav = self.wavegram(wav)
+        x_mel = self.conv(mel)
+        input = torch.cat((x_wav, x_mel), dim=1)
+        out, feature = self.MFN(input, label)
+        return out, feature
+

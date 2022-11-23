@@ -5,7 +5,7 @@ import pandas as pd
 from scipy.stats import hmean
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
-from sklearn.neighbors import LocalOutlierFactor
+from sklearn.neighbors import LocalOutlierFactor, NearestNeighbors
 from sklearn.mixture import GaussianMixture
 
 
@@ -47,13 +47,16 @@ def represent_extractor(embedding_list, pooling_type, domain_represent=False, va
         if var_threshold:
             # if var is bigger than threshold, than delete it
             var = torch.var(section_embedding_dict[key], dim=1)
-            index = torch.nonzero(var<torch.mean(var).item() , as_tuple=False)
+            index = torch.nonzero(var < torch.mean(var).item(), as_tuple=False)
             section_embedding_dict[key] = torch.index_select(section_embedding_dict[key], dim=0, index=index.squeeze())
         if pooling_type == 'avg':
             section_embedding_dict[key] = torch.mean(section_embedding_dict[key], dim=0)
         elif pooling_type == 'lof':
             lof_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
             section_embedding_dict[key] = LocalOutlierFactor(n_neighbors=4, novelty=True).fit(lof_list)
+        elif pooling_type == 'knn':
+            knn_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
+            section_embedding_dict[key] = NearestNeighbors(n_neighbors=1).fit(knn_list)
         elif pooling_type == 'gmm':
             gmm_list = section_embedding_dict[key].squeeze(dim=1).cpu().numpy()
             section_embedding_dict[key] = GaussianMixture(n_components=1, covariance_type='full').fit(gmm_list)
@@ -101,6 +104,14 @@ def anomaly_score_calculator(embedding, represent_embedding, score_type):
             score = torch.tensor(-represent_embedding[0].score_samples(embedding.unsqueeze(0).cpu().numpy()), dtype=torch.float32)[0].cuda()
         else:
             raise NotImplementedError
+    elif score_type == 'knn':
+        if len(represent_embedding) == 2:
+            score = torch.tensor(min(represent_embedding[0].kneighbors(embedding.unsqueeze(0).cpu().numpy())[0][0],
+                                     represent_embedding[1].kneighbors(embedding.unsqueeze(0).cpu().numpy())[0][0]), dtype=torch.float32)[0].cuda()
+        elif len(represent_embedding) == 1:
+            score = torch.tensor(represent_embedding[0].kneighbors(embedding.unsqueeze(0).cpu().numpy())[0][0], dtype=torch.float32)[0].cuda()
+        else:
+            raise NotImplementedError
     else:
         raise NotImplementedError
     return score
@@ -125,6 +136,28 @@ def compute_batch_anomaly_score(detected_embedding_dict, represent_embedding_dic
     return torch.stack(scores)
 
 
+def compute_segment_batch_anomaly_score(detected_embedding_dict, represent_embedding_dict, score_type='cosine', domain_represent=False, segment_num=10):
+    batch_size = len(detected_embedding_dict['embedding'])
+    assert batch_size % segment_num == 0, "validation batch size must be divisible by segment num"
+    scores = np.zeros((batch_size // segment_num, segment_num))
+    for idx, e in enumerate(range(batch_size)):
+        embedding = detected_embedding_dict['embedding'][e] # Embedding of a single sample
+        class_label = decode_class_label(detected_embedding_dict['class_label'][e])
+
+        if domain_represent:
+            source_label = str(class_label) + '_' + 'source'
+            target_label = str(class_label) + '_' + 'target'
+            source_represent_embedding = represent_embedding_dict[source_label]
+            target_represent_embedding = represent_embedding_dict[target_label]
+            represent_embedding = [source_represent_embedding, target_represent_embedding]
+        else:
+            represent_embedding = [represent_embedding_dict[str(class_label)]]
+        score = anomaly_score_calculator(embedding, represent_embedding, score_type)
+        scores[idx // segment_num][idx % segment_num] = score
+    scores = np.max(scores, axis=1, keepdims=False).tolist()
+    return torch.tensor(scores)
+
+
 def batched_preds(anomaly_scores, class_labels, anomaly_labels, domain_labels, filenames, lable_dict):
     prediction_df = pd.DataFrame()
 
@@ -142,6 +175,44 @@ def batched_preds(anomaly_scores, class_labels, anomaly_labels, domain_labels, f
 
 
 def compute_test_auc(prediction_df, max_fpr=0.1):
+    machine_set = sorted(list(set(prediction_df["machine_label"])))
+    section_set = sorted(set(prediction_df["section_label"]))
+    result = {}
+    for machine in machine_set:
+        machine_result_df = pd.DataFrame()
+        for section in section_set:
+            source_df = prediction_df[(prediction_df['machine_label'] == machine) &
+                                      (prediction_df['section_label'] == section) &
+                                      (prediction_df['domain_label'] == 'source')]
+            target_df = prediction_df[(prediction_df['machine_label'] == machine) &
+                                      (prediction_df['section_label'] == section) &
+                                      (prediction_df['domain_label'] == 'target')]
+            df = pd.concat([source_df, target_df])
+            auc = roc_auc_score(df.anomaly_label, df.anomaly_score)
+            pauc = roc_auc_score(df.anomaly_label, df.anomaly_score, max_fpr=max_fpr)
+            source_auc = roc_auc_score(source_df.anomaly_label, source_df.anomaly_score)
+            source_pauc = roc_auc_score(source_df.anomaly_label, source_df.anomaly_score, max_fpr=max_fpr)
+            target_auc = roc_auc_score(target_df.anomaly_label, target_df.anomaly_score)
+            target_pauc = roc_auc_score(target_df.anomaly_label, target_df.anomaly_score, max_fpr=max_fpr)
+            machine_result_df = machine_result_df.append([[section, auc, pauc, source_auc, source_pauc, target_auc, target_pauc]], ignore_index=True)
+        mean = []
+        har_mean = []
+        for index, col in machine_result_df.iteritems():
+            if index == 0:
+                continue
+            mean.append(np.mean(machine_result_df[index]))
+            har_mean.append(hmean(machine_result_df[index]))
+        machine_result_df = machine_result_df.append([["mean"] + mean], ignore_index=True)
+        machine_result_df = machine_result_df.append([["hmean"] + har_mean], ignore_index=True)
+
+        machine_result_df.columns = ['section', 'auc', 'pauc', 'source_auc', 'source_pauc', 'target_auc', 'target_pauc']
+        machine_result_df.reset_index(drop=True)
+        result[machine] = machine_result_df
+
+    return result
+
+
+def compute_segment_test_auc(prediction_df, max_fpr=0.1):
     machine_set = sorted(list(set(prediction_df["machine_label"])))
     section_set = sorted(set(prediction_df["section_label"]))
     result = {}

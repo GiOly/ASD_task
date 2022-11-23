@@ -1,6 +1,6 @@
 training:
-    batch_size: 64
-    batch_size_val: 128
+    batch_size: 128
+    batch_size_val: 300
     num_workers: 12
     n_epochs: 200
     early_stop_patience: 20
@@ -11,7 +11,7 @@ training:
     precision: 32
     arcface: True
     max_fpr: 0.1
-    mixup: False
+    mixup: True
     add_noise: False
     center_loss: False  #if use center loss, please add argument 'optimizer_idx' to training_step()
 scaler:
@@ -27,10 +27,11 @@ data:
     audio_max_len: 10
 opt:
     lr: 0.001
-    center_loss_lr: 0.01
+    center_loss_lr: 0.5
 feats:
+    feature: STFT
     sample_rate: 16000
-    n_window: 1024
+    n_window: 2048
     hop_length: 512
     f_min: 50
     f_max: 8000
@@ -41,6 +42,6 @@ net:
     margin: 0.7
     scale: 30
 represent:
-    score_type: cosine
-    pooling_type: avg
+    score_type: knn
+    pooling_type: knn
     domain_represent: False

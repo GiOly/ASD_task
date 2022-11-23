@@ -18,16 +18,17 @@ import torch.multiprocessing
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from dataset import ASDDataset
+from dataset import ASDDataset_segment
 from label import dev_section_label_dict, dev_eval_section_label_dict
-from nnet.model import MobileFaceNet, SimpleMobileFaceNet
+from nnet.model import MobileFaceNet
 from nnet.arcface import ArcMarginProduct
 from nnet.center_loss import CenterLoss
-from trainer import ASDTask
+from trainer_segment import ASDTask
 
 
 def main(
@@ -43,39 +44,47 @@ def main(
         dev_train_df = pd.read_csv(config["data"]["dev_train_csv"])
         eval_train_df = pd.read_csv(config["data"]["eval_train_csv"])
         train_df = pd.concat([dev_train_df, eval_train_df])
-        train_dataset = ASDDataset(
+        train_dataset = ASDDataset_segment(
             audio_folder=config["data"]["audio_folder"],
             csv_entries=train_df,
             class_label_dict=dev_eval_section_label_dict,
             pad_to=config["data"]["audio_max_len"],
+            segment_len=1,
             dir_name='train',
             return_class_label=True,
             return_domain_label=config["represent"]["domain_represent"]
         )
     else:
         train_df = pd.read_csv(config["data"]["dev_train_csv"])
-        train_dataset = ASDDataset(
+        train_dataset = ASDDataset_segment(
             audio_folder=config["data"]["audio_folder"],
             csv_entries=train_df,
             class_label_dict=dev_section_label_dict,
             pad_to=config["data"]["audio_max_len"],
             dir_name='train',
+            segment_len=1,
             return_class_label=True,
             return_domain_label=config["represent"]["domain_represent"]
         )
 
     test_df = pd.read_csv(config["data"]["dev_test_csv"])
-    test_dataset = ASDDataset(
+    test_dataset = ASDDataset_segment(
         audio_folder=config["data"]["audio_folder"],
         csv_entries=test_df,
         class_label_dict=dev_section_label_dict,
         pad_to=config["data"]["audio_max_len"],
         dir_name='test',
+        segment_len=1,
         return_class_label=True,
         return_anomaly_label=True,
         return_domain_label=True,
         return_filename=True
     )
+
+    represent_loader = DataLoader(dataset=train_dataset,
+                                  batch_size=512,
+                                  shuffle=False,
+                                  num_workers=config["training"]["num_workers"])
 
     ########################
     # define arcface
@@ -108,12 +117,13 @@ def main(
 
     if test_state_dict is None:
         valid_df = pd.read_csv(config["data"]["dev_test_csv"])
-        valid_dataset = ASDDataset(
+        valid_dataset = ASDDataset_segment(
             audio_folder=config["data"]["audio_folder"],
             csv_entries=valid_df,
             class_label_dict=dev_section_label_dict,
             pad_to=config["data"]["audio_max_len"],
             dir_name='test',
+            segment_len=1,
             return_class_label=True,
             return_anomaly_label=True,
             return_domain_label=config["represent"]["domain_represent"]
@@ -158,6 +168,7 @@ def main(
         train_data=train_dataset,
         valid_data=valid_dataset,
         test_data=test_dataset,
+        represent_loader=represent_loader,
         scheduler=scheduler,
         fast_dev_run=fast_dev_run,
         center_loss=criterion_cent,
@@ -205,7 +216,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Training a ASD system")
     parser.add_argument(
         "--conf_file",
-        default="./confs/default.yaml",
+        default="./confs/segment.yaml",
         help="The configuration file with all the experiment parameters.",
     )
     parser.add_argument(

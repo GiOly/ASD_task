@@ -33,9 +33,9 @@ def mixup(features, label=None, permutation=None, c=None, alpha=0.2, beta=0.2, m
             return mixed_features
 
 
-def add_noise(features, snrs=(30, 40), dims=(1, 2)):
+def add_noise(features, snrs=(30, 40), dims=(2, 3)):
     if isinstance(snrs, (list, tuple)):
-        snr = (snrs[0] - snrs[1]) * torch.rand((features.shape[0],), device=features.device).reshape(-1, 1, 1) + snrs[1]
+        snr = (snrs[0] - snrs[1]) * torch.rand((features.shape[0],), device=features.device).reshape(-1, 1, 1, 1) + snrs[1]
     else:
         snr = snrs
 

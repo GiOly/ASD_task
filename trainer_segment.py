@@ -8,8 +8,10 @@ import pytorch_lightning as pl
 
 from torchaudio.transforms import AmplitudeToDB, MelSpectrogram, Spectrogram
 from torchmetrics.classification import Accuracy, AUROC
+from tqdm import tqdm
 from utils.scaler import TorchScaler
-from utils.metric import batched_preds, compute_test_auc, compute_batch_anomaly_score, represent_extractor, decode_class_label
+from utils.metric import batched_preds, compute_segment_test_auc, compute_batch_anomaly_score, represent_extractor, \
+    compute_segment_batch_anomaly_score
 from utils.data_aug import mixup, add_noise
 
 
@@ -24,6 +26,7 @@ class ASDTask(pl.LightningModule):
             test_data,
             scheduler,
             fast_dev_run=False,
+            represent_loader=None,
             center_loss=None,
             opt_center_loss=None
     ):
@@ -44,6 +47,7 @@ class ASDTask(pl.LightningModule):
         self.train_data = train_data
         self.valid_data = valid_data
         self.test_data = test_data
+        self.represent_loader = represent_loader
         self.test_data_label_dict = {v: k for k, v in test_data.label_dict.items()}
         self.fast_dev_run = fast_dev_run
         if self.fast_dev_run:
@@ -52,18 +56,29 @@ class ASDTask(pl.LightningModule):
             self.num_workers = self.hparams["training"]["num_workers"]
 
         feat_params = self.hparams["feats"]
-        self.feat_transform = MelSpectrogram(
-            sample_rate=feat_params["sample_rate"],
-            n_fft=feat_params["n_window"],
-            win_length=feat_params["n_window"],
-            hop_length=feat_params["hop_length"],
-            f_min=feat_params["f_min"],
-            f_max=feat_params["f_max"],
-            n_mels=feat_params["n_mels"],
-            window_fn=torch.hamming_window,
-            wkwargs={"periodic": False},
-            power=1,
-        )
+        if self.hparams["feats"]["feature"] == "STFT":
+            self.feat_transform = Spectrogram(
+                n_fft=feat_params["n_window"] - 1,
+                win_length=feat_params["n_window"] - 1,
+                hop_length=feat_params["hop_length"],
+                window_fn=torch.hamming_window,
+                wkwargs={"periodic": False}
+            )
+        elif self.hparams["feats"]["feature"] == "Mel":
+            self.feat_transform = MelSpectrogram(
+                sample_rate=feat_params["sample_rate"],
+                n_fft=feat_params["n_window"],
+                win_length=feat_params["n_window"],
+                hop_length=feat_params["hop_length"],
+                f_min=feat_params["f_min"],
+                f_max=feat_params["f_max"],
+                n_mels=feat_params["n_mels"],
+                window_fn=torch.hamming_window,
+                wkwargs={"periodic": False},
+                power=1,
+            )
+        else:
+            raise NotImplementedError
 
         self.scaler = self._init_scaler()
 
@@ -141,7 +156,7 @@ class ASDTask(pl.LightningModule):
         # mixup
         if self.hparams["training"]["mixup"] and 0.5 > random.random():
             features, class_labels = mixup(features, class_labels)
-        #add noise
+        # add noise
         if self.hparams["training"]["add_noise"]:
             features = add_noise(features)
 
@@ -150,7 +165,7 @@ class ASDTask(pl.LightningModule):
         loss = self.supervised_loss(preds, class_labels)
         if self.center_loss is not None:
             loss_cent = self.center_loss(embeddings, class_labels)
-            loss += 0.1 * loss_cent
+            loss += loss_cent
 
         self.log('train/step', self.global_step)
         self.log('train/loss', loss)
@@ -160,7 +175,7 @@ class ASDTask(pl.LightningModule):
 
     def on_validation_epoch_start(self):
         self.embedding_list = []
-        for batch in self.train_dataloader():
+        for batch in tqdm(self.represent_loader):
 
             if self.hparams["represent"]["domain_represent"]:
                 audio, class_labels, domain_labels = batch
@@ -197,12 +212,15 @@ class ASDTask(pl.LightningModule):
             'class_label': class_labels
         }
 
-        anomaly_score = compute_batch_anomaly_score(detected_embedding_dict,
-                                                    self.represent_embedding_dict,
-                                                    self.hparams["represent"]["score_type"],
-                                                    self.hparams["represent"]["domain_represent"])
+        anomaly_score = compute_segment_batch_anomaly_score(detected_embedding_dict,
+                                                            self.represent_embedding_dict,
+                                                            self.hparams["represent"]["score_type"],
+                                                            self.hparams["represent"]["domain_represent"]).cuda()
 
+        batch_size = class_labels.shape[0]
+        anomaly_labels = torch.stack([i[0] for i in torch.chunk(anomaly_labels, batch_size // 10, dim=0)], dim=0)
         class_labels = class_labels.to(torch.int16)
+
         self.accuracy_calculator.update(preds, class_labels)
         self.auc_calculator.update(anomaly_score, anomaly_labels)
         self.pauc_calculator.update(anomaly_score, anomaly_labels)
@@ -228,7 +246,7 @@ class ASDTask(pl.LightningModule):
     def on_test_epoch_start(self):
         self.embedding_list = []
         self.train_data.return_domain_label = True
-        for batch in self.train_dataloader():
+        for batch in self.represent_loader:
             audio, class_labels, domain_labels = batch
             mels = self.feat_transform(audio.cuda())
             self.model.eval()
@@ -253,11 +271,16 @@ class ASDTask(pl.LightningModule):
             'domain_label': domain_labels,
             'class_label': class_labels
         }
+        batch_size = anomaly_labels.shape[0]
+        anomaly_scores = compute_segment_batch_anomaly_score(detected_embedding_dict,
+                                                             self.represent_embedding_dict,
+                                                             self.hparams["represent"]["score_type"],
+                                                             self.hparams["represent"]["domain_represent"]).cuda()
 
-        anomaly_scores = compute_batch_anomaly_score(detected_embedding_dict,
-                                                     self.represent_embedding_dict,
-                                                     self.hparams["represent"]["score_type"],
-                                                     self.hparams["represent"]["domain_represent"])
+        anomaly_labels = torch.stack([i[0] for i in torch.chunk(anomaly_labels, batch_size // 10, dim=0)], dim=0)
+        class_labels = torch.stack([i[0] for i in torch.chunk(class_labels, batch_size // 10, dim=0)], dim=0)
+        domain_labels = tuple(list(domain_labels)[i:i+10][0] for i in range(batch_size // 10))
+        filenames = tuple(list(filenames)[i:i+10][0] for i in range(batch_size // 10))
 
         batch_predict_df = batched_preds(anomaly_scores,
                                          class_labels,
@@ -270,7 +293,7 @@ class ASDTask(pl.LightningModule):
     def on_test_epoch_end(self):
         self.test_buffer.columns = ["filename", "anomaly_score", "anomaly_label",
                                     "machine_label", "section_label", "domain_label"]
-        result_dict = compute_test_auc(self.test_buffer, max_fpr=self.hparams["training"]["max_fpr"])
+        result_dict = compute_segment_test_auc(self.test_buffer, max_fpr=self.hparams["training"]["max_fpr"])
 
         csv_line = []
         auc_pauc = []

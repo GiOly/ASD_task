@@ -1,3 +1,8 @@
 .idea/
+train_asd_segment.py
+trainer.py
+confs/segment.yaml
+nnet/global_local_model.py
+nnet/wavegram.py
+utils/pcen.py
 ASD_multitask/
-ASD_global_local/
